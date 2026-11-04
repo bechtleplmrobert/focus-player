@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="color-scheme" content="normal">
+<title>FOKUS Player</title>
+<style>
+  :root { --green: #075033; --mint: #2FFB95; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
+               font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+
+  /* Das Video ist komplett unsichtbar: außerhalb des Bildes UND vollständig beschnitten.
+     Es wird nur der Ton genutzt. */
+  #yt {
+    position: fixed; left: 0; top: 0; width: 200px; height: 200px; z-index: -1;
+    opacity: 0; pointer-events: none; overflow: hidden;
+  }
+
+  .wrap {
+    position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+    padding: 0; min-width: 0;
+  }
+
+  /* Play / Pause: Outline-Icon, Mintgrün (das Titelbild liegt als Hintergrund hinter dem ganzen Kasten) */
+  #btn {
+    flex: none; width: clamp(56px, 30vh, 84px); height: clamp(56px, 30vh, 84px); border: 0; border-radius: 50%; background: transparent; color: var(--mint);
+    display: grid; place-items: center; cursor: pointer; padding: 0; transition: color .15s, transform .1s;
+  }
+  #btn svg { width: 100%; height: 100%; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.6)); transition: transform .15s; }
+  #btn:hover:not(:disabled) { color: #fff; }
+  #btn:hover:not(:disabled) svg { transform: scale(1.08); }
+  #btn:active:not(:disabled) svg { transform: scale(0.95); }
+  #btn:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+  #btn:disabled { opacity: .4; cursor: default; }
+  #btn.loading svg { animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  #btn .pause { display: none; }
+  #btn.playing .play  { display: none; }
+  #btn.playing .pause { display: block; }
+
+  /* Der Titel wird nicht angezeigt (nur als Tooltip am Button); sichtbar sind nur Fehlermeldungen */
+  .info { display: none; max-width: 100%; text-align: center; }
+  .info.err { display: block; }
+  #title { font-size: 12px; line-height: 1.3; color: #ffb3b3; text-shadow: 0 1px 6px rgba(0,0,0,0.8); }
+
+  /* Direkt im Browser geöffnet (nicht in der App eingebettet): dunkler Hintergrund,
+     damit Button und weiße Schrift sichtbar sind */
+  body.standalone { background: var(--green) center / cover no-repeat; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 18px; }
+  body.standalone .wrap { height: auto; width: min(100%, 460px); padding: 0 12px; }
+  #dbg { display: none; position: fixed; left: 8px; right: 8px; bottom: 8px; max-height: 55vh; overflow: auto; padding: 8px 10px; border-radius: 8px;
+         background: rgba(0,0,0,0.75); color: #bfffe0; font: 11px/1.45 ui-monospace, Menlo, monospace; white-space: pre-wrap; z-index: 9; }
+  body.debug #dbg { display: block; }
+  #ver { display: none; font-size: 11px; letter-spacing: 1px; color: rgba(255,255,255,0.55); text-transform: uppercase; text-align: center; line-height: 1.6; }
+  body.standalone #ver { display: block; position: fixed; top: 14px; left: 0; right: 0; }
+
+</style>
+</head>
+<body>
+<div id="yt"><div id="player"></div></div>
+
+<div class="wrap" id="wrap">
+  <button id="btn" aria-label="Play / Pause" disabled>
+    <svg class="play" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 1.5C6.21027 1.5 1.5 6.21027 1.5 12C1.5 17.7897 6.21027 22.5 12 22.5C17.7897 22.5 22.5 17.7897 22.5 12C22.5 6.21027 17.7897 1.5 12 1.5ZM12 21C7.03735 21 3 16.9626 3 12C3 7.03735 7.03735 3 12 3C16.9626 3 21 7.03735 21 12C21 16.9626 16.9626 21 12 21Z"/>
+      <path d="M9 17.1031L17.1651 11.9999L9 6.89679V17.1031ZM10.5 9.60315L14.3349 11.9999L10.5 14.3968V9.60315Z"/>
+    </svg>
+    <svg class="pause" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 1.5C6.21027 1.5 1.5 6.21027 1.5 12C1.5 17.7897 6.21027 22.5 12 22.5C17.7897 22.5 22.5 17.7897 22.5 12C22.5 6.21027 17.7897 1.5 12 1.5ZM12 21C7.03735 21 3 16.9626 3 12C3 7.03735 7.03735 3 12 3C16.9626 3 21 7.03735 21 12C21 16.9626 16.9626 21 12 21Z"/>
+      <rect x="8.5" y="8" width="2" height="8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+      <rect x="13.5" y="8" width="2" height="8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+    </svg>
+  </button>
+  <div class="info" id="info"><div id="title"></div></div>
+</div>
+<div id="dbg"></div>
+<div id="ver">FOKUS Player · Version 14<br>Dies ist die Hilfsseite für die App – Musik startet über die FOKUS-App.</div>
+
+<script>
+// Hilfsseite für die FOKUS-App. Läuft auf einer echten https-Adresse, damit YouTube
+// einen gültigen Referer sieht (sonst Fehler 153).
+// Aufruf: …/player.html   (optional: ?v=VIDEO_ID anderes Video, ?debug=1 Diagnose, ?autoplay=1 sofort starten)
+const q = new URLSearchParams(location.search);
+const VIDEO = (q.get('v') || 'rFZHOHl-L8A').replace(/[^\w-]/g, '');
+const AUTOPLAY = q.get('autoplay') === '1';
+
+// Diagnose: player.html?debug=1 zeigt einen Zeitverlauf (Start, Ready, Klick, Status, Fehler)
+const DEBUG = q.get('debug') === '1';
+const T0 = performance.now();
+function dbg(msg) {
+  if (!DEBUG) return;
+  document.body.classList.add('debug');
+  const el = document.getElementById('dbg');
+  el.textContent += '+' + ((performance.now() - T0) / 1000).toFixed(2).padStart(6) + ' s  ' + msg + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+window.addEventListener('error', e => dbg('JS-Fehler: ' + e.message));
+dbg('Seite geladen (Version 14, Video ' + VIDEO + ')');
+
+if (window.self === window.top) document.body.classList.add('standalone');
+const btn = document.getElementById('btn');
+const titleEl = document.getElementById('title');
+const SN = {'-1':'UNSTARTED',0:'ENDED',1:'PLAYING',2:'PAUSED',3:'BUFFERING',5:'CUED'};
+let player = null, loadingTimer = null;
+
+// Die App legt das Titelbild des Videos als Hintergrund hinter den ganzen Kasten
+function announce() {
+  let title = '';
+  try { title = (player && player.getVideoData && player.getVideoData().title) || ''; } catch (e) {}
+  try { parent.postMessage({ type: 'fokus-video', id: VIDEO, title }, '*'); } catch (e) {}
+  if (document.body.classList.contains('standalone'))
+    document.body.style.backgroundImage = 'linear-gradient(rgba(2,22,16,.55), rgba(2,22,16,.7)), url(https://i.ytimg.com/vi/' + encodeURIComponent(VIDEO) + '/mqdefault.jpg)';
+}
+announce();                      // Bild sofort, schon vor dem Start
+setInterval(announce, 5000);     // falls die App später geladen wurde
+
+function setError(t) { titleEl.textContent = t; document.getElementById('info').classList.add('err'); }
+function setLoading(on) {
+  clearTimeout(loadingTimer);
+  btn.classList.toggle('loading', on);
+  if (on) loadingTimer = setTimeout(() => btn.classList.remove('loading'), 15000);   // Sicherung
+}
+function setPlaying(on) { btn.classList.toggle('playing', on); if (on) setLoading(false); }
+
+const ERRORS = {
+  2: 'ungültige Video-ID', 5: 'Player-Fehler', 100: 'Video nicht gefunden',
+  101: 'Einbetten gesperrt', 150: 'Einbetten gesperrt',
+  153: 'Referer fehlt (Fehler 153)'
+};
+
+function onYouTubeIframeAPIReady() {
+  dbg('YouTube-API bereit, Player wird erzeugt');
+  player = new YT.Player('player', {
+    width: 200, height: 200, videoId: VIDEO,
+    // loop + playlist=<gleiche ID>: das Video wiederholt sich dauerhaft
+    playerVars: { playsinline: 1, controls: 0, rel: 0, loop: 1, playlist: VIDEO, origin: location.origin },
+    events: {
+      onReady: () => {
+        btn.disabled = false;
+        dbg('onReady (Player bereit)');
+        announce();
+        if (AUTOPLAY) { setLoading(true); player.playVideo(); }
+      },
+      onStateChange: e => {
+        const S = YT.PlayerState;
+        dbg('Status: ' + (SN[e.data] || e.data));
+        if (e.data === S.PLAYING) setPlaying(true);
+        if (e.data === S.PAUSED || e.data === S.CUED || e.data === S.UNSTARTED) setPlaying(false);
+        if (e.data === S.ENDED) { try { player.seekTo(0); player.playVideo(); } catch (er) {} }   // Absicherung für Dauerschleife
+        if (e.data === S.PLAYING || e.data === S.BUFFERING) announce();
+      },
+      onError: e => {
+        dbg('YouTube-Fehler ' + e.data + ' (' + (ERRORS[e.data] || 'unbekannt') + ')');
+        btn.disabled = true; setPlaying(false); setLoading(false);
+        setError('Fehler ' + e.data + ': ' + (ERRORS[e.data] || 'unbekannt'));
+      }
+    }
+  });
+}
+
+btn.addEventListener('click', () => {
+  if (!player) return;
+  const st = player.getPlayerState();
+  dbg('Button gedrückt (Status ' + (SN[st] || st) + ')');
+  if (st === YT.PlayerState.PLAYING || st === YT.PlayerState.BUFFERING) { player.pauseVideo(); setLoading(false); }
+  else { setLoading(true); player.playVideo(); }   // sofort starten, nichts abwarten
+});
+
+const s = document.createElement('script');
+s.src = 'https://www.youtube.com/iframe_api';
+s.onload = () => dbg('YouTube-Skript geladen');
+s.onerror = () => { dbg('YouTube-Skript NICHT erreichbar'); setError('YouTube nicht erreichbar'); };
+document.head.appendChild(s);
+</script>
+</body>
+</html>
