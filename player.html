@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="color-scheme" content="normal">
+<title>FOKUS Player</title>
+<style>
+  :root { --green: #075033; --mint: #2FFB95; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
+               font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+
+  /* Das Video ist komplett unsichtbar: außerhalb des Bildes UND vollständig beschnitten.
+     Es wird nur der Ton genutzt. */
+  #yt {
+    position: fixed; left: -400px; top: -400px; width: 200px; height: 200px;
+    clip-path: inset(100%); opacity: 0; pointer-events: none; overflow: hidden;
+  }
+
+  .wrap {
+    height: 100%; display: flex; align-items: center; gap: clamp(12px, 3vw, 18px);
+    padding: 0 2px; min-width: 0;
+  }
+
+  /* Play / Pause: Outline-Icon, Mintgrün (das Titelbild liegt als Hintergrund hinter dem ganzen Kasten) */
+  #btn {
+    flex: none; width: 60px; height: 60px; border: 0; border-radius: 50%; background: transparent; color: var(--mint);
+    display: grid; place-items: center; cursor: pointer; padding: 0; transition: color .15s, transform .1s;
+  }
+  #btn svg { width: 100%; height: 100%; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.6)); transition: transform .15s; }
+  #btn:hover:not(:disabled) { color: #fff; }
+  #btn:hover:not(:disabled) svg { transform: scale(1.08); }
+  #btn:active:not(:disabled) svg { transform: scale(0.95); }
+  #btn:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+  #btn:disabled { opacity: .4; cursor: default; }
+  #btn .pause { display: none; }
+  #btn.playing .play  { display: none; }
+  #btn.playing .pause { display: block; }
+
+  .info { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 4px; }
+  #title {
+    font-size: 15px; font-weight: 700; line-height: 1.35; color: #fff; text-shadow: 0 1px 8px rgba(0,0,0,0.75);
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word;
+  }
+  #title.idle { color: rgba(255,255,255,0.75); font-weight: 400; font-style: italic; }
+  #title.err { color: #ffb3b3; font-weight: 400; font-size: 12px; }
+
+  /* Direkt im Browser geöffnet (nicht in der App eingebettet): dunkler Hintergrund,
+     damit Button und weiße Schrift sichtbar sind */
+  body.standalone { background: var(--green) center / cover no-repeat; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 18px; }
+  body.standalone .wrap { height: auto; width: min(100%, 460px); padding: 0 12px; }
+  #ver { display: none; font-size: 11px; letter-spacing: 1px; color: rgba(255,255,255,0.55); text-transform: uppercase; text-align: center; line-height: 1.6; }
+  body.standalone #ver { display: block; }
+
+  @media (max-width: 330px) { #btn { width: 46px; height: 46px; } #title { font-size: 13px; } }
+</style>
+</head>
+<body>
+<div id="yt"><div id="player"></div></div>
+
+<div class="wrap" id="wrap">
+  <button id="btn" aria-label="Play / Pause" disabled>
+    <svg class="play" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 1.5C6.21027 1.5 1.5 6.21027 1.5 12C1.5 17.7897 6.21027 22.5 12 22.5C17.7897 22.5 22.5 17.7897 22.5 12C22.5 6.21027 17.7897 1.5 12 1.5ZM12 21C7.03735 21 3 16.9626 3 12C3 7.03735 7.03735 3 12 3C16.9626 3 21 7.03735 21 12C21 16.9626 16.9626 21 12 21Z"/>
+      <path d="M9 17.1031L17.1651 11.9999L9 6.89679V17.1031ZM10.5 9.60315L14.3349 11.9999L10.5 14.3968V9.60315Z"/>
+    </svg>
+    <svg class="pause" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 1.5C6.21027 1.5 1.5 6.21027 1.5 12C1.5 17.7897 6.21027 22.5 12 22.5C17.7897 22.5 22.5 17.7897 22.5 12C22.5 6.21027 17.7897 1.5 12 1.5ZM12 21C7.03735 21 3 16.9626 3 12C3 7.03735 7.03735 3 12 3C16.9626 3 21 7.03735 21 12C21 16.9626 16.9626 21 12 21Z"/>
+      <rect x="8.5" y="8" width="2" height="8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+      <rect x="13.5" y="8" width="2" height="8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+    </svg>
+  </button>
+  <div class="info"><div id="title" class="idle">Fokus-Playlist</div></div>
+</div>
+<div id="ver">FOKUS Player · Version 7<br>Dies ist die Hilfsseite für die App – Musik startet über die FOKUS-App.</div>
+
+<script>
+// Hilfsseite für die FOKUS-App. Läuft auf einer echten https-Adresse, damit YouTube
+// einen gültigen Referer sieht (sonst Fehler 153).
+// Aufruf: …/player.html?autoplay=1   (optional: &list=PLAYLIST_ID)
+const q = new URLSearchParams(location.search);
+const LIST = (q.get('list') || 'PL2a-uP2bpH9_yP6L58BO8Bhw4fJKgCwM5').replace(/[^\w-]/g, '');
+const AUTOPLAY = q.get('autoplay') === '1';
+
+if (window.self === window.top) document.body.classList.add('standalone');
+const btn = document.getElementById('btn');
+const wrap = document.getElementById('wrap');
+let player = null, started = false;
+
+const titleEl = document.getElementById('title');
+let curId = '';
+function currentVideo() {
+  // 1) offizielle Video-Daten, 2) Playlist + Index, 3) Video-URL
+  try { const d = player.getVideoData && player.getVideoData(); if (d && d.video_id) return { id: d.video_id, title: d.title || '' }; } catch (e) {}
+  try {
+    const ids = player.getPlaylist && player.getPlaylist(), i = player.getPlaylistIndex && player.getPlaylistIndex();
+    if (ids && ids.length && i >= 0 && ids[i]) return { id: ids[i], title: '' };
+  } catch (e) {}
+  try { const m = /[?&]v=([\w-]{6,})/.exec(player.getVideoUrl && player.getVideoUrl()); if (m) return { id: m[1], title: '' }; } catch (e) {}
+  return null;
+}
+function updateMeta() {
+  const v = player && currentVideo();
+  if (!v) return;
+  const changed = v.id !== curId || (v.title && v.title !== titleEl.textContent);
+  if (v.id !== curId) curId = v.id;
+  if (v.title) { titleEl.textContent = v.title; titleEl.className = ''; }
+  if (!changed) return;
+  // Die App legt das Titelbild als Hintergrund hinter den ganzen Kasten
+  try { parent.postMessage({ type: 'fokus-video', id: v.id, title: v.title || titleEl.textContent }, '*'); } catch (e) {}
+  if (document.body.classList.contains('standalone'))
+    document.body.style.backgroundImage = 'linear-gradient(rgba(2,22,16,.55), rgba(2,22,16,.7)), url(https://i.ytimg.com/vi/' + encodeURIComponent(v.id) + '/mqdefault.jpg)';
+}
+setInterval(updateMeta, 1000);
+
+function setStatus(t, err) { if (err) { titleEl.textContent = t; titleEl.className = 'err'; } }
+function setPlaying(on) { btn.classList.toggle('playing', on); }
+
+const ERRORS = {
+  2: 'ungültige Playlist', 5: 'Player-Fehler', 100: 'nicht gefunden',
+  101: 'Einbetten gesperrt', 150: 'Einbetten gesperrt',
+  153: 'Referer fehlt (Fehler 153)'
+};
+
+// Zufälliges Video: Länge der Playlist abwarten, zufälligen Index wählen, danach gemischt
+function startRandom() {
+  if (started) return;
+  let tries = 0;
+  const poll = setInterval(() => {
+    const ids = player.getPlaylist && player.getPlaylist();
+    if ((ids && ids.length) || ++tries > 40) {
+      clearInterval(poll);
+      started = true;
+      clearTimeout(window.__wd);
+      window.__wd = setTimeout(() => {
+        const st = player.getPlayerState();
+        if (st !== YT.PlayerState.PLAYING && st !== YT.PlayerState.BUFFERING) {
+          setPlaying(false); setStatus('Zum Starten ▶ drücken');
+        }
+      }, 6000);
+      try {
+        player.setLoop(true);
+        player.setShuffle(true);
+        if (ids && ids.length) player.playVideoAt(Math.floor(Math.random() * ids.length));
+        else player.playVideo();
+      } catch (e) { player.playVideo(); }
+    }
+  }, 250);
+}
+
+function onYouTubeIframeAPIReady() {
+  player = new YT.Player('player', {
+    width: 200, height: 200,
+    playerVars: { listType: 'playlist', list: LIST, playsinline: 1, controls: 0,
+                  rel: 0, origin: location.origin },
+    events: {
+      onReady: () => {
+        btn.disabled = false;
+        setStatus(AUTOPLAY ? 'Startet…' : 'Bereit');
+        if (AUTOPLAY) startRandom();
+      },
+      onStateChange: e => {
+        const S = YT.PlayerState;
+        updateMeta(); setTimeout(updateMeta, 600);
+        if (e.data === S.PLAYING)   { setPlaying(true);  setStatus('Läuft'); }
+        if (e.data === S.PAUSED)    { setPlaying(false); setStatus('Pausiert'); }
+        if (e.data === S.BUFFERING) { setStatus('Lädt…'); }
+        if (e.data === S.CUED || e.data === S.UNSTARTED) { setPlaying(false); if (!started) setStatus('Bereit'); }
+      },
+      onError: e => {
+        btn.disabled = true; setPlaying(false);
+        setStatus('Fehler ' + e.data + ': ' + (ERRORS[e.data] || 'unbekannt'), true);
+      }
+    }
+  });
+}
+
+btn.addEventListener('click', () => {
+  if (!player) return;
+  const st = player.getPlayerState();
+  if (st === YT.PlayerState.PLAYING || st === YT.PlayerState.BUFFERING) player.pauseVideo();
+  else if (!started) startRandom();
+  else player.playVideo();
+});
+
+const s = document.createElement('script');
+s.src = 'https://www.youtube.com/iframe_api';
+s.onerror = () => setStatus('YouTube nicht erreichbar', true);
+document.head.appendChild(s);
+</script>
+</body>
+</html>
